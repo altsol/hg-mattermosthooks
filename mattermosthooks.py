@@ -50,7 +50,8 @@ def pushhook(node, hooktype, url, repo, source, ui, **kwargs):
         ensure_repo_name=ensure_repo_name,
         changes=messages)
 
-    post_message_to_mattermost(text, config)
+    if messages:
+        post_message_to_mattermost(text, config)
 
 
 def get_changesets(repo, node):

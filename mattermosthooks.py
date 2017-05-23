@@ -50,7 +50,7 @@ def pushhook(node, hooktype, url, repo, source, ui, **kwargs):
         ensure_repo_name=ensure_repo_name,
         changes=messages)
 
-    if messages:
+    if count:
         post_message_to_mattermost(text, config)
 
 
@@ -72,6 +72,7 @@ def render_changesets(ui, repo, changesets, config):
         node_template = "{node|short}"
 
     template = "{0}: ```{1}```\\n".format(node_template, " | ".join([
+        "{author|person}",
         "{branch}",
         "{date(date, '%Y-%m-%d [%H:%M:%S]')}",
         "{desc|strip|firstline}"

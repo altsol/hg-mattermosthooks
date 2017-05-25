@@ -21,16 +21,23 @@ Config = namedtuple(
     ])
 
 
+def get_webhook_urls(config_group, ui):
+    webhook_urls = dict(
+        default=ui.config(config_group, 'webhook_url')
+    )
+    for field, value in ui.configitems(config_group):
+        if '.webhook_url' in field:
+            assert len(field) > len('.webhook_url'), 'Mattermost team configuration error'
+            webhook_urls.update(([
+                field.split('.')[0], value
+            ],))
+    return webhook_urls
+
+
 def get_config(ui):
     return Config(
-        webhook_urls = dict(
-            default=ui.config(
-                config_group, 'webhook_url'
-            ),
-            myproject=ui.config(
-                config_group, 'webhook_url_myproject', default=None
-            )
-        ),
+        webhook_urls = get_webhook_urls(
+            config_group, ui),
 
         repo_name = ui.config(
 	    config_group, 'repo_name', default=None),

@@ -76,16 +76,26 @@ def get_changesets(repo, node):
     node_rev = repo[node].rev()
     tip_rev = repo['tip'].rev()
 
+    def belongs_myproject(branch_name):
+        return any(
+            myproject_branch_name in branch_name
+            for myproject_branch_name in '''
+                otherproject1
+                otherproject2
+                myproject
+            '''.split()
+        )
+
     changesets = dict(
         default = [
             rev
             for rev in range(tip_rev, node_rev - 1, -1)
-            if 'myproject' not in repo[rev].branch()
+            if not belongs_myproject(repo[rev].branch())
         ],
         myproject = [
             rev
             for rev in range(tip_rev, node_rev - 1, -1)
-            if 'myproject' in repo[rev].branch()
+            if belongs_myproject(repo[rev].branch())
         ]
     )
     return changesets

@@ -11,8 +11,7 @@ config_group = 'mattermosthooks'
 Config = namedtuple(
     'HgMattermostHooksConfig',
     field_names=[
-        'webhook_url',
-        'webhook_url_mainproject',
+        'webhook_urls',
         'repo_name',
         'commit_url',
         'username',
@@ -23,45 +22,69 @@ Config = namedtuple(
 
 def get_config(ui):
     return Config(
-        webhook_url = ui.config(config_group, 'webhook_url'),
-        webhook_url_mainproject = ui.config(config_group, 'webhook_url_mainproject'),
-        repo_name = ui.config(config_group, 'repo_name', default=None),
-        commit_url = ui.config(config_group, 'commit_url', default=None),
-        username = ui.config(config_group, 'username', default="mercurial"),
-        icon_emoji = ui.config(config_group, 'icon_emoji', default=None),
-        icon_url = ui.config(config_group, 'icon_url', default=None)
+        webhook_urls = dict(
+            default=ui.config(
+                config_group, 'webhook_url'
+            ),
+            myproject=ui.config(
+                config_group, 'webhook_url_myproject', default=None
+            )
+        ),
+
+        repo_name = ui.config(
+	    config_group, 'repo_name', default=None),
+
+        commit_url = ui.config(
+	    config_group, 'commit_url', default=None),
+
+        username = ui.config(
+	    config_group, 'username', default="mercurial"),
+
+        icon_emoji = ui.config(
+	    config_group, 'icon_emoji', default=None),
+
+        icon_url = ui.config(
+	    config_group, 'icon_url', default=None)
     )
 
 
 def pushhook(node, hooktype, url, repo, source, ui, **kwargs):
     config = get_config(ui)
+    for team, changesets in get_changesets(repo, node).iteritems():
+        count = len(changesets)
+        messages = render_changesets(ui, repo, changesets, config)
 
-    changesets = get_changesets(repo, node)
-    count = len(changesets)
-    messages = render_changesets(ui, repo, changesets, config)
+        ensure_plural = "s" if count > 1 else ""
+        ensure_repo_name = " to \"{0}\"".format(os.path.basename(repo.root))
 
-    ensure_plural = "s" if count > 1 else ""
-    ensure_repo_name = " to \"{0}\"".format(os.path.basename(repo.root))
+        text = "{user} pushes {count} changeset{ensure_plural}{ensure_repo_name}:\n{changes}".format(
+            user=ui.username() or config.username,
+            count=count,
+            ensure_plural=ensure_plural,
+            ensure_repo_name=ensure_repo_name,
+            changes=messages)
 
-    text = "{user} pushes {count} changeset{ensure_plural}{ensure_repo_name}:\n{changes}".format(
-        user=ui.username() or config.username,
-        count=count,
-        ensure_plural=ensure_plural,
-        ensure_repo_name=ensure_repo_name,
-        changes=messages)
-
-    if count:
-        post_message_to_mattermost(text, config)
+        if count:
+            post_message_to_mattermost(text, config, team)
 
 
 def get_changesets(repo, node):
     node_rev = repo[node].rev()
     tip_rev = repo['tip'].rev()
-    return [
-        rev
-        for rev in range(tip_rev, node_rev - 1, -1)
-        if 'myproject' in repo[rev].branch()
-    ]
+
+    changesets = dict(
+        default = [
+            rev
+            for rev in range(tip_rev, node_rev - 1, -1)
+            if 'myproject' not in repo[rev].branch()
+        ],
+        myproject = [
+            rev
+            for rev in range(tip_rev, node_rev - 1, -1)
+            if 'myproject' in repo[rev].branch()
+        ]
+    )
+    return changesets
 
 
 def render_changesets(ui, repo, changesets, config):
@@ -85,15 +108,14 @@ def render_changesets(ui, repo, changesets, config):
     return ui.popbuffer()
 
 
-def post_message_to_mattermost(message, config):
+def post_message_to_mattermost(message, config, team):
     payload = {
         'text': message,
         'username': config.username,
     }
     payload_optional_key(payload, config, 'icon_url')
     payload_optional_key(payload, config, 'icon_emoji')
-    webhook_url = config.webhook_url
-    request = urllib2.Request(webhook_url, "payload={0}".format(json.dumps(payload)))
+    request = urllib2.Request(config.webhook_urls[team], "payload={0}".format(json.dumps(payload)))
     urllib2.build_opener().open(request)
 
 

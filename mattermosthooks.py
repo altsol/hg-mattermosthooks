@@ -2,6 +2,7 @@
 import urllib2
 import json
 import os
+import re
 
 from collections import namedtuple
 from mercurial.cmdutil import show_changeset
@@ -52,7 +53,10 @@ def pushhook(node, hooktype, url, repo, source, ui, **kwargs):
     config = get_config(ui)
     for team, changesets in get_changesets(repo, node).iteritems():
         count = len(changesets)
-        messages = render_changesets(ui, repo, changesets, config)
+        messages = re.sub(
+            '[;]', '',
+            render_changesets(ui, repo, changesets, config)
+        )
 
         ensure_plural = "s" if count > 1 else ""
         ensure_repo_name = " to \"{0}\"".format(os.path.basename(repo.root))
@@ -115,7 +119,9 @@ def post_message_to_mattermost(message, config, team):
     }
     payload_optional_key(payload, config, 'icon_url')
     payload_optional_key(payload, config, 'icon_emoji')
-    request = urllib2.Request(config.webhook_urls[team], "payload={0}".format(json.dumps(payload)))
+    fmt = json.dumps(payload)
+    # print fmt
+    request = urllib2.Request(config.webhook_urls[team], "payload={0}".format(fmt))
     urllib2.build_opener().open(request)
 
 

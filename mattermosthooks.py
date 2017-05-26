@@ -12,47 +12,47 @@ config_group = 'mattermosthooks'
 Config = namedtuple(
     'HgMattermostHooksConfig',
     field_names=[
-        'webhook_urls',
+        'webhook_url',
+        'branches',
         'repo_name',
-        'commit_url',
         'username',
         'icon_emoji',
         'icon_url',
     ])
 
 
-def get_webhook_urls(config_group, ui):
-    webhook_urls = dict(
-        default=ui.config(config_group, 'webhook_url')
-    )
+
+def get_teams(ui):
+    yield 'default'
     for field, value in ui.configitems(config_group):
         if '.webhook_url' in field:
             assert len(field) > len('.webhook_url'), 'Mattermost team configuration error'
-            webhook_urls.update(([
-                field.split('.')[0], value
-            ],))
-    return webhook_urls
+            yield field.split('.')[0]
 
 
-def get_config(ui):
+def get_config(ui, team):
+    get_field = lambda field: '{team_with_separator}{field}'.format(
+        team_with_separator='' if team == 'default' else '{}.'.format(team),
+        field=field
+    )
     return Config(
-        webhook_urls = get_webhook_urls(
-            config_group, ui),
+        webhook_url = ui.config(
+            config_group, get_field('webhook_url')),
+
+        branches = ui.configlist(
+            config_group, get_field('branches')),
 
         repo_name = ui.config(
-	    config_group, 'repo_name', default=None),
-
-        commit_url = ui.config(
-	    config_group, 'commit_url', default=None),
+            config_group, 'repo_name', default=None),
 
         username = ui.config(
-	    config_group, 'username', default="mercurial"),
+            config_group, 'username', default="mercurial"),
 
         icon_emoji = ui.config(
-	    config_group, 'icon_emoji', default=None),
+            config_group, 'icon_emoji', default=None),
 
         icon_url = ui.config(
-	    config_group, 'icon_url', default=None)
+            config_group, 'icon_url', default=None)
     )
 
 

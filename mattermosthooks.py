@@ -148,6 +148,6 @@ def post_message_to_mattermost(message, config, team):
 
 
 def payload_optional_key(payload, config, key):
-    value = config.__getattmainprojectute__(key)
+    value = config.__getattribute__(key)
     if value:
         payload[key] = value

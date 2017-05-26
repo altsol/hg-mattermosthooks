@@ -140,9 +140,10 @@ def post_message_to_mattermost(message, config, team):
     }
     payload_optional_key(payload, config, 'icon_url')
     payload_optional_key(payload, config, 'icon_emoji')
-    fmt = json.dumps(payload)
-    # print fmt
-    request = urllib2.Request(config.webhook_url, "payload={0}".format(fmt))
+    request = urllib2.Request(
+        config.webhook_url,
+        "payload={0}".format(json.dumps(payload))
+    )
     urllib2.build_opener().open(request)
 
 

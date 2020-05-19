@@ -3,7 +3,7 @@ import urllib2
 import json
 
 from collections import namedtuple
-from mercurial.cmdutil import show_changeset
+from mercurial.logcmdutil import changesetdisplayer
 
 
 config_group = 'mattermosthooks'
@@ -72,7 +72,7 @@ def render_changesets(ui, repo, changesets, config):
         # "{desc}",
     ]))
 
-    displayer = show_changeset(ui, repo, {'template': template})
+    displayer = changesetdisplayer(ui, repo, {'template': template})
     ui.pushbuffer()
     for rev in changesets:
         displayer.show(repo[rev])

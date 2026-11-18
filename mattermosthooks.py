@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-import sys
 import traceback
 import requests
 import json
 
 from collections import namedtuple
+from urllib.parse import unquote_to_bytes
 from mercurial.logcmdutil import changesetdisplayer
+from mercurial.utils.stringutil import person
 
 
 config_group = b'mattermosthooks'
@@ -20,55 +21,96 @@ Config = namedtuple(
         'icon_url',
     ])
 
+# Changeset sources that mean "someone pushed". Over hgweb or ssh the source is
+# 'serve', for a push to a local path it is 'push'. Others ('strip' when hg
+# restores a backup bundle, 'pull', 'unbundle', ...) are not announced.
+PUSH_SOURCES = (b'serve', b'push')
+
+# At most this many changesets are listed in one message.
+MAX_CHANGESETS = 20
+
+REQUEST_TIMEOUT = 10  # seconds
+
+
+def _decode(value):
+    return value.decode('utf-8') if value is not None else None
+
 
 def get_config(ui):
-    webhook_url = ui.config(config_group, b'webhook_url').decode('utf-8')
-    repo_name = ui.config(config_group, b'repo_name', default=None)
-    commit_url = ui.config(config_group, b'commit_url', default=None)
-    username = ui.config(config_group, b'username', default="mercurial")
-    icon_emoji = ui.config(config_group, b'icon_emoji', default=None)
-    icon_url = ui.config(config_group, b'icon_url', default=None)
+    return Config(
+        webhook_url=_decode(ui.config(config_group, b'webhook_url')),
+        repo_name=_decode(ui.config(config_group, b'repo_name')),
+        commit_url=_decode(ui.config(config_group, b'commit_url')),
+        username=_decode(ui.config(config_group, b'username')) or 'mercurial',
+        icon_emoji=_decode(ui.config(config_group, b'icon_emoji')),
+        icon_url=_decode(ui.config(config_group, b'icon_url')),
+    )
 
-    if repo_name is not None:
-       repo_name = repo_name.decode('utf-8')
-    if commit_url is not None:
-       commit_url = commit_url.decode('utf-8')
-    if icon_emoji is not None:
-       icon_emoji = icon_emoji.decode('utf-8')
-    if icon_url is not None:
-       icon_url = icon_url.decode('utf-8')
 
-    return Config(webhook_url, repo_name, commit_url, username, icon_emoji, icon_url)
+def warn(ui, message):
+    ui.warn(('mattermosthooks: ' + message + '\n').encode('utf-8'))
 
 
 def pushhook(node, hooktype, url, repo, source, ui, **kwargs):
+    # Errors go through ui.warn: under hgweb, plain stdout never reaches the
+    # pusher, while ui output is sent back as "remote:" lines.
     try:
-        username = ui.username().decode('utf-8')
+        if source not in PUSH_SOURCES:
+            return
         config = get_config(ui)
+        if not config.webhook_url:
+            warn(ui, 'webhook_url not configured, nothing posted')
+            return
 
-        changesets = get_changesets(repo, node)
+        changesets = get_changesets(repo, node, kwargs.get('node_last'))
         count = len(changesets)
-        messages = render_changesets(ui, repo, changesets, config).decode('utf-8')
+        shown = changesets[:MAX_CHANGESETS]
+        messages = render_changesets(ui, repo, shown, config).decode('utf-8')
+        if count > len(shown):
+            messages += "… and {0} more\n".format(count - len(shown))
 
         ensure_plural = "s" if count > 1 else ""
         ensure_repo_name = " to \"{0}\"".format(config.repo_name) if config.repo_name else ""
 
         text = "{user} pushes {count} changeset{ensure_plural}{ensure_repo_name}:\n{changes}".format(
-            user=username,
+            user=pusher_name(url, repo, changesets),
             count=count,
             ensure_plural=ensure_plural,
             ensure_repo_name=ensure_repo_name,
             changes=messages)
 
-        post_message_to_mattermost(text, config)
+        post_message_to_mattermost(ui, text, config)
+    except requests.RequestException as e:
+        warn(ui, 'failed to reach Mattermost: {0}'.format(e))
     except Exception:
-        traceback.print_exc(file=sys.stdout)
+        warn(ui, 'failed to notify Mattermost:\n' + traceback.format_exc())
 
 
-def get_changesets(repo, node):
+def get_changesets(repo, node, node_last=None):
+    """Revs of this push, newest first.
+
+    node_last is used instead of tip: the hook runs after the lock is released,
+    so tip may already include changesets of a later push."""
     node_rev = repo[node].rev()
-    tip_rev = repo[b'tip'].rev()
-    return range(tip_rev, node_rev - 1, -1)
+    last_rev = repo[node_last].rev() if node_last else repo[b'tip'].rev()
+    return range(last_rev, node_rev - 1, -1)
+
+
+def pusher_name(url, repo, changesets):
+    """The authenticated HTTP user if there is one, else the changeset authors.
+
+    ui.username() would be the server's user (e.g. www-data@host), not the pusher.
+    For pushes over HTTP, url is b'remote:<scheme>:<host>:<user>' (quoted)."""
+    parts = url.split(b':') if url else []
+    if len(parts) == 4 and parts[0] == b'remote' and parts[3]:
+        return unquote_to_bytes(parts[3]).decode('utf-8', 'replace')
+
+    authors = []
+    for rev in changesets:
+        name = person(repo[rev].user()).decode('utf-8', 'replace')
+        if name not in authors:
+            authors.append(name)
+    return ", ".join(authors)
 
 
 def render_changesets(ui, repo, changesets, config):
@@ -91,7 +133,7 @@ def render_changesets(ui, repo, changesets, config):
     return ui.popbuffer()
 
 
-def post_message_to_mattermost(message, config):
+def post_message_to_mattermost(ui, message, config):
     payload = {
         'text': message,
         'username': config.username,
@@ -100,13 +142,13 @@ def post_message_to_mattermost(message, config):
     payload_optional_key(payload, config, 'icon_emoji')
     # Let requests URL-encode the form body: raw ';', '&', '+' or '%' in commit
     # messages otherwise break the form parsing on the Mattermost side (HTTP 400).
-    response = requests.post(config.webhook_url, data={'payload': json.dumps(payload)})
+    response = requests.post(config.webhook_url, data={'payload': json.dumps(payload)},
+                             timeout=REQUEST_TIMEOUT)
     if not response.ok:
-        print("mattermosthooks: webhook returned HTTP {0}: {1}".format(
-            response.status_code, response.text))
+        warn(ui, 'webhook returned HTTP {0}: {1}'.format(response.status_code, response.text))
 
 
 def payload_optional_key(payload, config, key):
-    value = config.__getattribute__(key)
+    value = getattr(config, key)
     if value:
         payload[key] = value

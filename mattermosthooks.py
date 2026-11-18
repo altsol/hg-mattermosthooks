@@ -72,8 +72,10 @@ def pushhook(node, hooktype, url, repo, source, ui, **kwargs):
         ensure_plural = "s" if count > 1 else ""
         ensure_repo_name = " to \"{0}\"".format(config.repo_name) if config.repo_name else ""
 
-        text = "{user} pushes {count} changeset{ensure_plural}{ensure_repo_name}:\n{changes}".format(
-            user=pusher_name(url, repo, changesets),
+        names = pusher_names(url, repo, changesets)
+        text = "{user} {verb} {count} changeset{ensure_plural}{ensure_repo_name}:\n{changes}".format(
+            user=join_names(names),
+            verb="push" if len(names) > 1 else "pushes",
             count=count,
             ensure_plural=ensure_plural,
             ensure_repo_name=ensure_repo_name,
@@ -96,34 +98,46 @@ def get_changesets(repo, node, node_last=None):
     return range(last_rev, node_rev - 1, -1)
 
 
-def pusher_name(url, repo, changesets):
-    """The authenticated HTTP user if there is one, else the changeset authors.
+def pusher_names(url, repo, changesets):
+    """[authenticated HTTP user] if there is one, else the unique changeset authors.
 
     ui.username() would be the server's user (e.g. www-data@host), not the pusher.
     For pushes over HTTP, url is b'remote:<scheme>:<host>:<user>' (quoted)."""
     parts = url.split(b':') if url else []
     if len(parts) == 4 and parts[0] == b'remote' and parts[3]:
-        return unquote_to_bytes(parts[3]).decode('utf-8', 'replace')
+        return [unquote_to_bytes(parts[3]).decode('utf-8', 'replace')]
 
     authors = []
     for rev in changesets:
         name = person(repo[rev].user()).decode('utf-8', 'replace')
         if name not in authors:
             authors.append(name)
-    return ", ".join(authors)
+    return authors
+
+
+def join_names(names):
+    """'A', 'A and B', 'A, B and C'."""
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def escape_template(text):
+    """Make text literal inside an hg template ('\\' and '{' are special there)."""
+    return text.replace('\\', '\\\\').replace('{', '\\{')
 
 
 def render_changesets(ui, repo, changesets, config):
     if config.commit_url is not None:
-        node_template = "<{commit_url}{{node|short}}|{{node|short}}>".format(commit_url=config.commit_url)
+        node_template = "<" + escape_template(config.commit_url) + "{node|short}|{node|short}>"
     else:
         node_template = "{node|short}"
 
     template = "{0}: ```{1}```\\n".format(node_template, " | ".join([
         "{branch}",
         "{date(date, '%Y-%m-%d [%H:%M:%S]')}",
-        "{desc|strip|firstline}",
-        # "{desc}",
+        # a backtick would end the code span early, so it becomes a quote
+        "{sub('`', \"'\", desc|strip|firstline)}",
     ])).encode('utf-8')
 
     displayer = changesetdisplayer(ui, repo, {b'template': template})

@@ -98,9 +98,12 @@ def post_message_to_mattermost(message, config):
     }
     payload_optional_key(payload, config, 'icon_url')
     payload_optional_key(payload, config, 'icon_emoji')
-    encoded_payload = json.dumps(payload)
-    encoded_payload = "payload={0}".format(encoded_payload)
-    requests.post(config.webhook_url, data=encoded_payload, headers={'Content-Type': 'application/x-www-form-urlencoded'})
+    # Let requests URL-encode the form body: raw ';', '&', '+' or '%' in commit
+    # messages otherwise break the form parsing on the Mattermost side (HTTP 400).
+    response = requests.post(config.webhook_url, data={'payload': json.dumps(payload)})
+    if not response.ok:
+        print("mattermosthooks: webhook returned HTTP {0}: {1}".format(
+            response.status_code, response.text))
 
 
 def payload_optional_key(payload, config, key):
